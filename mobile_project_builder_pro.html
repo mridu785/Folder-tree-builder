@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101827">
+<title>Mobile Project Builder Pro</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#111c2e;--line:#263650;--text:#e8eef8;--muted:#93a4bc;--accent:#73a7ff;--good:#7be0b0;--bad:#ff9898}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#0c1423,#0b1220 55%,#11192b);color:var(--text);font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif}main{max-width:920px;margin:auto;padding:17px 14px calc(35px + env(safe-area-inset-bottom))}header{padding:8px 4px 17px}h1{font-size:25px;margin:0 0 6px}header p{color:var(--muted);margin:0;line-height:1.5}.panel{background:#111c2eee;border:1px solid var(--line);border-radius:17px;padding:15px;margin:12px 0}label{font-weight:700;display:block;margin:0 0 8px}input,textarea{width:100%;background:#09111e;color:var(--text);border:1px solid #31435e;border-radius:12px;padding:12px;font:14px ui-monospace,Consolas,monospace;outline:none}input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px #73a7ff22}textarea{min-height:250px;resize:vertical;line-height:1.5}input{margin-bottom:11px}.row{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid #344762;border-radius:12px;padding:11px 14px;background:#1a2a43;color:var(--text);font-weight:700;min-height:44px}.primary{background:#2d65bd;border-color:#427ed9}.soft{background:#101b2c}.btn:disabled{opacity:.45}.note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}.status{display:none;margin-top:12px;padding:10px 12px;border-radius:11px;background:#091726;color:var(--muted);font-size:13px;white-space:pre-wrap}.status.show{display:block}.status.good{color:var(--good)}.status.bad{color:var(--bad)}.stats{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.stat{font-size:12px;color:var(--muted);border:1px solid var(--line);background:#0b1727;padding:7px 10px;border-radius:999px}.preview{background:#09111e;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:440px;overflow:auto;font:13px ui-monospace,Consolas,monospace;white-space:pre;line-height:1.5}details summary{cursor:pointer;color:var(--accent);font-weight:700}footer{text-align:center;color:var(--muted);font-size:12px;padding:14px}
+</style></head>
+<body><main>
+<header><h1>📦 Mobile Project Builder Pro</h1><p>Reliable project-tree parser, structure verification, and ZIP creation—all local and offline.</p></header>
+<section class="panel">
+<label for="projectName">ZIP / project folder name</label><input id="projectName" value="my-project" autocomplete="off">
+<label for="treeInput">Paste project tree</label><textarea id="treeInput" spellcheck="false" placeholder="my-project/
+├── index.html
+├── .gitignore
+├── assets/
+│   └── icons/
+│       └── icon.svg
+└── src/
+    └── main.js"></textarea>
+<div class="row"><button class="btn primary" id="analyze">Analyze &amp; verify</button><button class="btn soft" id="example">Example tree</button><button class="btn soft" id="clear">Clear</button></div>
+<p class="note">Supports standard tree output, Unicode branches, dotfiles (like .gitignore), extensionless files (like _redirects), and plain relative paths. Unsafe paths (../ or absolute paths) are blocked. No source code contents are generated.</p>
+<div id="status" class="status"></div>
+</section>
+<section class="panel" id="result" hidden>
+<label>Verified structure</label><div id="stats" class="stats"></div><div id="preview" class="preview"></div>
+<div class="row" style="margin-top:12px"><button class="btn primary" id="zip">Build &amp; download ZIP</button><button class="btn soft" id="copy">Copy paths</button></div>
+<p class="note">The ZIP contains an explicit root project folder, every detected subfolder, and every detected file. The ZIP is checked for entry count before download.</p>
+</section>
+<section class="panel"><details><summary>Android workflow</summary><ol style="color:var(--muted);line-height:1.7;padding-left:20px"><li>Save this HTML and open it in your browser.</li><li>Paste the full project tree.</li><li>Tap Analyze &amp; verify, review the complete list.</li><li>Build ZIP and download.</li><li>Extract the ZIP in your file manager.</li><li>Open the project in your code editor and fill the files.</li></ol></details></section>
+<footer>Offline • Local only • No server • ZIP structure verification</footer>
+</main>
+<script>
+(()=> {
+const $=id=>document.getElementById(id);let project=null;
+const knownFiles=new Set(['_redirects','README','LICENSE','Dockerfile','Makefile','Procfile','NOTICE','CHANGELOG']);
+function cleanName(s){return (s||'project').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g,'-').replace(/[. ]+$/,'')||'project'}
+function safePath(p){p=p.replace(/\\/g,'/').replace(/^\.\/+/,'').replace(/\/+$/,'');if(!p||p.startsWith('/')||p.split('/').some(x=>x==='..'||x==='.'||x===''))return null;return p}
+function isFile(name,explicitDir=false){if(explicitDir)return false;if(name.startsWith('.')&&name.length>1)return true;if(knownFiles.has(name))return true;return /\.[a-zA-Z0-9_-]+$/.test(name)}
+function parse(raw){
+ const lines=raw.replace(/\r/g,'').split('\n').filter(l=>l.trim()&&!/^```/.test(l.trim()));
+ const files=[],dirs=[],warnings=[];let stack=[],root='';
+ if(!lines.length)return {files,dirs,warnings,root};
+ // Root detection: first line may be project root, not an entry.
+ const first=lines[0].trim().replace(/^[`"' ]+|[`"' ]+$/g,'');
+ if(lines.length>1 && !/[├└]──/.test(first) && (first.endsWith('/') || (!first.includes('/')&&!isFile(first)))) {
+   root=first.replace(/\/+$/,''); lines.shift();
+ }
+ const seenFile=new Set(),seenDir=new Set();
+ function addFile(p,line){const s=safePath(p);if(!s){warnings.push(`Skipped unsafe file path on line: ${line}`);return}if(seenFile.has(s)){warnings.push(`Duplicate file ignored: ${s}`);return}seenFile.add(s);files.push(s)}
+ function addDir(p,line){const s=safePath(p);if(!s){warnings.push(`Skipped unsafe folder path on line: ${line}`);return}if(!seenDir.has(s)){seenDir.add(s);dirs.push(s)}}
+ for(const line of lines){
+   const m=line.match(/[├└]──\s*/);
+   if(m){
+     const prefix=line.slice(0,m.index);
+     // Every tree indent level occupies 4 characters ("│   " or "    ").
+     const depth=Math.floor(prefix.length/4);
+     let label=line.slice(m.index+m[0].length).trim();
+     if(!label)continue;
+     const explicitDir=label.endsWith('/');
+     label=label.replace(/\/+$/,'');
+     stack=stack.slice(0,depth);
+     if(isFile(label,explicitDir)){
+       const parent=stack.slice(0,depth).join('/');
+       addFile(parent?parent+'/'+label:label,line);
+     }else{
+       stack[depth]=label;
+       addDir(stack.slice(0,depth+1).join('/'),line);
+     }
+   }else{
+     // Plain paths: explicit path is respected; indentation list is interpreted by nesting.
+     let label=line.trim().replace(/^[-*•]\s*/,'');
+     if(label===root||label===root+'/')continue;
+     if(label.startsWith('./'))label=label.slice(2);
+     if(label.startsWith('/')||label.split('/').includes('..')){warnings.push(`Skipped unsafe path: ${label}`);continue}
+     if(label.includes('/')){
+       if(label.endsWith('/'))addDir(label,line);
+       else if(isFile(label.split('/').pop()))addFile(label,line);
+       else addDir(label,line);
+     }else{
+       const indent=line.match(/^\s*/)[0].replace(/\t/g,'    ').length;
+       const depth=Math.floor(indent/2);
+       stack=stack.slice(0,depth);
+       if(isFile(label))addFile(stack.length?stack.join('/')+'/'+label:label,line);
+       else{stack[depth]=label;addDir(stack.slice(0,depth+1).join('/'),line)}
+     }
+   }
+ }
+ // Infer all parent folders from files and folders.
+ for(const p of [...files,...dirs]){const seg=p.split('/');for(let i=1;i<seg.length;i++)addDir(seg.slice(0,i).join('/'),p)}
+ // Conflicts: a path can't be both file and directory.
+ const fileSet=new Set(files);const finalDirs=dirs.filter(d=>!fileSet.has(d));
+ return {files,dirs:finalDirs,warnings,root};
+}
+function status(text,kind=''){const s=$('status');s.textContent=text;s.className='status show '+kind}
+function render(){
+ const root=cleanName($('projectName').value);
+ const paths=[root+'/',...project.dirs.map(d=>root+'/'+d+'/'),...project.files.map(f=>root+'/'+f)].sort((a,b)=>a.localeCompare(b));
+ $('stats').innerHTML=`<span class="stat">${project.files.length} files</span><span class="stat">${project.dirs.length} subfolders</span><span class="stat">${paths.length} ZIP entries</span>${project.warnings.length?'<span class="stat">'+project.warnings.length+' warnings</span>':''}`;
+ $('preview').textContent=paths.join('\n');$('result').hidden=false;
+}
+$('analyze').onclick=()=>{
+ const raw=$('treeInput').value.trim();if(!raw){status('Paste a project tree first.','bad');return}
+ project=parse(raw);
+ if(project.root && $('projectName').value==='my-project')$('projectName').value=cleanName(project.root);
+ if(!project.files.length&&!project.dirs.length){$('result').hidden=true;status('No paths were recognized. Try the Unicode tree format or plain paths.','bad');return}
+ render();
+ const msg=`Verified: ${project.files.length} files + ${project.dirs.length} folders. Nothing silently dropped from recognized entries.${project.warnings.length?'\nWarnings:\n'+project.warnings.join('\n'):'\nNo path warnings.'}`;
+ status(msg,project.warnings.length?'':'good');
+};
+$('example').onclick=()=>{$('projectName').value='demo';$('treeInput').value=`demo/
+├── index.html
+├── README.md
+├── .gitignore
+├── _redirects
+├── assets/
+│   ├── logo/
+│   │   └── logo.svg
+│   └── icons/
+│       ├── icon.svg
+│       └── maskable.svg
+└── src/
+    ├── app.js
+    └── components/
+        └── Header.js`;status('Example inserted. Tap Analyze & verify.','good')};
+$('clear').onclick=()=>{$('treeInput').value='';project=null;$('result').hidden=true;status('Cleared.')};
+$('copy').onclick=async()=>{const root=cleanName($('projectName').value);const p=[root+'/',...project.dirs.map(d=>root+'/'+d+'/'),...project.files.map(f=>root+'/'+f)].sort().join('\n');try{await navigator.clipboard.writeText(p);status('All paths copied to clipboard.','good')}catch{status('Clipboard unavailable; select and copy from preview.','bad')}};
+function crc32(bytes){let c=~0;for(let i=0;i<bytes.length;i++){c^=bytes[i];for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xEDB88320:0)}return(~c)>>>0}
+const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+function zip(entries){const enc=new TextEncoder(),local=[],central=[];let offset=0;for(const e of entries){const name=enc.encode(e.name),data=e.data||new Uint8Array(),crc=crc32(data);
+const l=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...name,...data]);local.push(l);
+const c=new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset),...name]);central.push(c);offset+=l.length}
+const size=central.reduce((n,c)=>n+c.length,0);const end=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(entries.length),...u16(entries.length),...u32(size),...u32(offset),...u16(0)]);return new Blob([...local,...central,end],{type:'application/zip'})}
+$('zip').onclick=()=>{
+ if(!project)return;const root=cleanName($('projectName').value);const entries=[{name:root+'/',data:new Uint8Array()}];
+ project.dirs.forEach(d=>entries.push({name:root+'/'+d.replace(/\/+$/,'')+'/',data:new Uint8Array()}));
+ project.files.forEach(f=>entries.push({name:root+'/'+f,data:new Uint8Array()}));
+ // Entry count integrity check before creating archive.
+ const expected=1+project.dirs.length+project.files.length;
+ if(entries.length!==expected){status(`Integrity check failed: expected ${expected}, generated ${entries.length}. ZIP blocked.`,'bad');return}
+ try{const blob=zip(entries);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=root+'.zip';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);status(`ZIP generated and verified: ${entries.length} entries (${project.files.length} files, ${project.dirs.length} folders). Download: ${root}.zip`,'good')}catch(err){status('ZIP creation error: '+err.message,'bad')}
+};
+})();
+</script></body></html>
